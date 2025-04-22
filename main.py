@@ -13,7 +13,7 @@ class FishingPlugin(Star):
         self.logger = logging.getLogger("FishingPlugin")
         
         # 初始化数据目录
-        self.data_dir = context.get_plugin_data_dir()
+        self.data_dir = "data/"
         os.makedirs(self.data_dir, exist_ok=True)
         
         # 初始化数据库和钓鱼系统
@@ -64,21 +64,21 @@ class FishingPlugin(Star):
     @filter.command("钓鱼")
     async def fishing(self, event: AstrMessageEvent):
         '''开始钓鱼'''
-        user_id = event.sender.user_id
+        user_id = event.get_sender_id()
         result = self.fishing_system.fish(user_id)
         yield event.plain_result(result)
     
     @filter.command("鱼塘")
     async def fish_pond(self, event: AstrMessageEvent):
         '''查看自己的鱼塘'''
-        user_id = event.sender.user_id
+        user_id = event.get_sender_id()
         result = self.fishing_system.get_user_fish_pond(user_id)
         yield event.plain_result(result)
     
     @filter.command("卖鱼")
     async def sell_fish(self, event: AstrMessageEvent):
         '''卖出鱼获得金币'''
-        user_id = event.sender.user_id
+        user_id = event.get_sender_id()
         message = event.message_str
         # 解析参数，提取鱼名和数量
         parts = message.split()
@@ -96,14 +96,14 @@ class FishingPlugin(Star):
     @filter.command("全部卖出")
     async def sell_all_fish(self, event: AstrMessageEvent):
         '''卖出所有鱼获得金币'''
-        user_id = event.sender.user_id
+        user_id = event.get_sender_id()
         result = self.fishing_system.sell_all_fish(user_id)
         yield event.plain_result(result)
     
     @filter.command("自动钓鱼")
     async def auto_fishing(self, event: AstrMessageEvent):
         '''开启/关闭自动钓鱼'''
-        user_id = event.sender.user_id
+        user_id = event.get_sender_id()
         result = self.fishing_system.toggle_auto_fishing(user_id)
         yield event.plain_result(result)
     
@@ -122,7 +122,7 @@ class FishingPlugin(Star):
     @filter.command("钓鱼签到")
     async def daily_check_in(self, event: AstrMessageEvent):
         '''每日钓鱼签到'''
-        user_id = event.sender.user_id
+        user_id = event.get_sender_id()
         result = self.fishing_system.daily_check_in(user_id)
         yield event.plain_result(result)
     
@@ -135,7 +135,7 @@ class FishingPlugin(Star):
     @filter.command("购买鱼饵")
     async def buy_bait(self, event: AstrMessageEvent):
         '''购买鱼饵'''
-        user_id = event.sender.user_id
+        user_id = event.get_sender_id()
         message = event.message_str
         # 解析参数，提取鱼饵名称
         parts = message.split()
@@ -149,7 +149,7 @@ class FishingPlugin(Star):
     @filter.command("使用鱼饵")
     async def use_bait(self, event: AstrMessageEvent):
         '''使用鱼饵'''
-        user_id = event.sender.user_id
+        user_id = event.get_sender_id()
         message = event.message_str
         # 解析参数，提取鱼饵名称
         parts = message.split()
@@ -163,7 +163,7 @@ class FishingPlugin(Star):
     @filter.command("我的鱼饵")
     async def my_baits(self, event: AstrMessageEvent):
         '''查看我的鱼饵'''
-        user_id = event.sender.user_id
+        user_id = event.get_sender_id()
         result = self.fishing_system.show_my_baits(user_id)
         yield event.plain_result(result)
     
