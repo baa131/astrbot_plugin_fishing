@@ -10,6 +10,8 @@
 - 自动钓鱼功能
 - 鱼类稀有度分级系统
 - 多样化的鱼类资源
+- 排行榜系统（总榜/日榜/周榜/月榜）
+- 天气系统，影响钓鱼成功率和费用
 
 ## 安装方法
 
@@ -23,7 +25,7 @@
 
 ```bash
 cd {AstrBot目录}/data/plugins
-git clone https://github.com/yourusername/astrbot_plugin_fishing
+git clone https://github.com/baa131/astrbot_plugin_fishing
 ```
 
 ## 使用方法
@@ -36,14 +38,21 @@ git clone https://github.com/yourusername/astrbot_plugin_fishing
 - `/全部卖出` - 卖出鱼塘中所有可卖出的鱼
 - `/钓鱼帮助` - 显示帮助信息
 - `/自动钓鱼` - 开启/关闭自动钓鱼功能
+- `/钓鱼排行` - 查看总排行榜
+- `/日榜` - 查看今日排行
+- `/周榜` - 查看本周排行
+- `/月榜` - 查看本月排行
 
 ## 配置说明
 
-插件首次运行时会在插件数据目录创建配置文件，你可以根据需要修改以下配置：
+当前版本配置在 `main.py` 的 `__init__` 中硬编码，可直接修改：
 
+- `base_cost`: 每次钓鱼的基础成本(金币)，默认 50，实际费用受天气影响
 - `auto_fishing_enabled`: 是否启用自动钓鱼功能
-- `auto_fishing_interval`: 自动钓鱼的时间间隔(秒)
-- `fishing_cost`: 每次钓鱼的成本(金币)
+- `weather_update_interval`: 天气刷新间隔(秒)
+- `initialize_fish_types`: 是否在启动时初始化/更新鱼类数据
+
+数据库文件 `data/fishing.db` 会自动创建并做兼容迁移，无需手动处理。
 
 ## 常见问题
 

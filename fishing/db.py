@@ -80,10 +80,18 @@ class FishingDB:
                     user_id TEXT,
                     fish_id INTEGER,
                     quantity INTEGER DEFAULT 0,
+                    total_value INTEGER DEFAULT 0,
                     no_sell_until INTEGER,
                     PRIMARY KEY (user_id, fish_id)
                 )
             ''')
+
+            # 兼容旧表结构：补充 total_value 列
+            cursor.execute("PRAGMA table_info(user_fish)")
+            columns = {info[1] for info in cursor.fetchall()}
+            if 'total_value' not in columns:
+                cursor.execute('ALTER TABLE user_fish ADD COLUMN total_value INTEGER DEFAULT 0')
+                logging.info("Added total_value column to user_fish table")
             
             # 创建用户鱼饵表
             cursor.execute('''
@@ -111,11 +119,19 @@ class FishingDB:
                     user_id TEXT,
                     fish_id INTEGER,
                     weight INTEGER,
+                    value INTEGER DEFAULT 0,
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                     is_special INTEGER DEFAULT 0
                 )
             ''')
-            
+
+            # 兼容旧表结构：补充 value 列
+            cursor.execute("PRAGMA table_info(fishing_records)")
+            columns = {info[1] for info in cursor.fetchall()}
+            if 'value' not in columns:
+                cursor.execute('ALTER TABLE fishing_records ADD COLUMN value INTEGER DEFAULT 0')
+                logging.info("Added value column to fishing_records table")
+
             conn.commit()
     
     def get_user_fish(self, user_id: str) -> List[Dict]:
@@ -124,6 +140,7 @@ class FishingDB:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT f.id, f.name, f.rarity, uf.quantity, f.base_value,
+                       CASE WHEN uf.total_value > 0 THEN uf.total_value / uf.quantity ELSE f.base_value END as value,
                        CASE WHEN uf.no_sell_until > strftime('%s', 'now') 
                             THEN uf.no_sell_until - strftime('%s', 'now')
                             ELSE 0 END as lock_time
@@ -141,7 +158,8 @@ class FishingDB:
                     'rarity': row[2],
                     'quantity': row[3],
                     'base_value': row[4],
-                    'lock_time': row[5]
+                    'value': row[5],
+                    'lock_time': row[6]
                 })
             return results
     
@@ -233,16 +251,22 @@ class FishingDB:
             
             return [{"bait_id": row[0], "quantity": row[1]} for row in cursor.fetchall()]
     
-    def add_fish_to_pond(self, user_id: str, fish_id: int) -> None:
-        """添加鱼到用户鱼塘"""
+    def add_fish_to_pond(self, user_id: str, fish_id: int, value: int = 0) -> None:
+        """添加鱼到用户鱼塘
+        Args:
+            user_id: 用户ID
+            fish_id: 鱼的ID
+            value: 捕获时鱼的单价(金币)，用于出售结算
+        """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO user_fish (user_id, fish_id, quantity, no_sell_until)
-                VALUES (?, ?, 1, 0)
+                INSERT INTO user_fish (user_id, fish_id, quantity, total_value, no_sell_until)
+                VALUES (?, ?, 1, ?, 0)
                 ON CONFLICT(user_id, fish_id) DO UPDATE
-                SET quantity = quantity + 1
-            ''', (user_id, fish_id))
+                SET quantity = quantity + 1,
+                    total_value = total_value + ?
+            ''', (user_id, fish_id, value, value))
             conn.commit()
     
     def get_bait_info(self, user_id: str) -> Optional[Dict]:
@@ -455,26 +479,29 @@ class FishingDB:
             VALUES (?, 100)
         ''', (user_id,))
     
-    def get_user_fish_quantity(self, user_id: str, fish_id: str) -> int:
-        """获取用户特定鱼的数量"""
+    def get_user_fish_value(self, user_id: str, fish_id: str) -> Dict:
+        """获取用户特定鱼的数量和累计价值
+        Returns:
+            {'quantity': 数量, 'total_value': 累计价值}
+        """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT quantity FROM user_fish
+                SELECT quantity, total_value FROM user_fish
                 WHERE user_id = ? AND fish_id = ?
             ''', (user_id, fish_id))
             result = cursor.fetchone()
-            return result[0] if result else 0
-    
-    def remove_fish_from_pond(self, user_id: str, fish_id: str, amount: int) -> None:
+            return {'quantity': result[0], 'total_value': result[1]} if result else {'quantity': 0, 'total_value': 0}
+
+    def remove_fish_from_pond(self, user_id: str, fish_id: str, amount: int, value_amount: int = 0) -> None:
         """从鱼塘中移除鱼"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE user_fish
-                SET quantity = quantity - ?
-                WHERE user_id = ? AND fish_id = ?
-            ''', (amount, user_id, fish_id))
+                SET quantity = quantity - ?, total_value = MAX(total_value - ?, 0)
+                WHERE user_id = ? AND fish_id = ? AND quantity >= ?
+            ''', (amount, value_amount, user_id, fish_id, amount))
             conn.commit()
     
     def clear_user_fish(self, user_id: str) -> None:
@@ -514,6 +541,56 @@ class FishingDB:
                 })
             return results
     
+    def record_fishing(self, user_id: str, fish_id: int, weight: int, value: int) -> None:
+        """记录钓鱼数据用于排行榜
+        Args:
+            user_id: 用户ID
+            fish_id: 鱼的ID
+            weight: 重量(克)
+            value: 捕获时的价值(金币)
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO fishing_records (user_id, fish_id, weight, value)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, fish_id, weight, value))
+            conn.commit()
+
+    def get_leaderboard(self, period: str = 'all', limit: int = 10) -> List[Dict]:
+        """获取排行榜
+        Args:
+            period: 'all'|'day'|'week'|'month' 统计周期
+            limit: 返回条数
+        """
+        time_filters = {
+            'day': "timestamp >= datetime('now', '-1 day')",
+            'week': "timestamp >= datetime('now', '-7 days')",
+            'month': "timestamp >= datetime('now', '-1 month')"
+        }
+        where = ""
+        if period in time_filters:
+            where = "WHERE " + time_filters[period]
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f'''
+                SELECT user_id, COUNT(*) as catch_count, SUM(value) as total_value
+                FROM fishing_records
+                {where}
+                GROUP BY user_id
+                ORDER BY total_value DESC, catch_count DESC
+                LIMIT ?
+            ''', (limit,))
+            return [
+                {
+                    'user_id': row[0],
+                    'catch_count': row[1],
+                    'total_value': row[2]
+                }
+                for row in cursor.fetchall()
+            ]
+
     def set_current_bait(self, user_id: str, bait_name: str) -> None:
         """设置用户当前使用的鱼饵"""
         with sqlite3.connect(self.db_path) as conn:

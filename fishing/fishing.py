@@ -1,12 +1,10 @@
-from typing import Dict, Tuple, Optional, List
+from typing import Dict
 import random
 import time
 import threading
 import logging
 from .db import FishingDB
 from .constants import *
-from .fish import Fish
-from .stats import FisherStats, BestCatch
 
 class FishingSystem:
     def __init__(self, config: Dict, get_nickname_func):
@@ -17,11 +15,7 @@ class FishingSystem:
         self.current_weather = None
         self.last_weather_update = 0
         self.update_weather()
-        self.fish_db: Dict[str, List[Fish]] = {}  # user_id -> fish list
-        self.auto_fishing: Dict[str, bool] = {}   # user_id -> is_auto_fishing
-        self.last_fish_time: Dict[str, float] = {}  # user_id -> last_fish_time
-        self.last_steal_time: Dict[str, float] = {}  # user_id -> last_steal_time
-        
+
         # 读取自动钓鱼配置
         self.auto_fishing_enabled = config.get('auto_fishing_enabled', True)
         self.LOG.info(f"自动钓鱼功能: {'已启用' if self.auto_fishing_enabled else '已禁用'}")
@@ -61,6 +55,12 @@ class FishingSystem:
 💰 /卖鱼 <鱼名> <数量>：出售指定鱼获得金币
 📦 /全部卖出：一次性卖出所有鱼
 
+排行榜：
+🏆 /钓鱼排行：查看总排行榜
+📊 /日榜：查看今日排行
+📈 /周榜：查看本周排行
+📉 /月榜：查看本月排行
+
 鱼饵系统：
 🏪 /鱼饵商城：查看可购买的鱼饵
 🛒 /购买鱼饵 <名称>：购买指定鱼饵
@@ -79,21 +79,33 @@ class FishingSystem:
         """获取天气信息"""
         self.update_weather()
         weather = self.current_weather
-        weather_effects = {
-            '晴天': {'success_rate': 0.7, 'cost_modifier': 1.0},
-            '阴天': {'success_rate': 0.6, 'cost_modifier': 1.0},
-            '雨天': {'success_rate': 0.5, 'cost_modifier': 1.05},
-            '暴雨': {'success_rate': 0.3, 'cost_modifier': 1.1},
-            '极光': {'success_rate': 0.6, 'cost_modifier': 1.1},
-            '潮汐': {'success_rate': 0.8, 'cost_modifier': 0.9}
-        }
-        effects = weather_effects.get(weather, {'success_rate': 0.5, 'cost_modifier': 1.0})
+        effects = WEATHER_EFFECTS.get(weather, {'success_rate': 0.5, 'cost_modifier': 1.0})
         success_rate = effects.get('success_rate', 0.5)
         cost_modifier = effects.get('cost_modifier', 1.0)
         
         return f"""🌤️ 当前天气：{weather}
 成功率：{int(success_rate * 100)}%
 费用修正：{int(cost_modifier * 100)}%"""
+
+    def show_leaderboard(self, period: str = 'all') -> str:
+        """显示排行榜
+        Args:
+            period: 'all'|'day'|'week'|'month' 统计周期
+        """
+        board = self.db.get_leaderboard(period)
+        if not board:
+            return "🏆 排行榜还没有数据，快去钓鱼上榜吧！"
+
+        period_text = {'all': '总', 'day': '今日', 'week': '本周', 'month': '本月'}.get(period, period)
+
+        result = [f"🏆 钓鱼{period_text}排行榜 🏆", "-" * 20]
+        for i, record in enumerate(board, 1):
+            nickname = self.get_nickname(record['user_id'])
+            result.append(f"第{i}名: {nickname}")
+            result.append(f"💰 总价值: {record['total_value']}金币 | 🎣 捕获: {record['catch_count']}条")
+            result.append("")
+
+        return "\n".join(result)
 
     def fish(self, user_id: str, is_auto: bool = False) -> str:
         """钓鱼主函数"""
@@ -126,7 +138,9 @@ class FishingSystem:
         if random.random() < success_rate:
             fish = self.get_random_fish()
             if fish:
-                self.db.add_fish_to_pond(user_id, fish['id'])
+                self.db.add_fish_to_pond(user_id, fish['id'], fish['value'])
+                # 记录钓鱼数据用于排行榜
+                self.db.record_fishing(user_id, fish['id'], int(fish['weight'] * 1000), fish['value'])
                 message = f"""🎣 {fish['grade_display']} 恭喜钓到了
 【{fish['name']}】{self.get_rarity_stars(fish['rarity'])}
 ⚖️ 重量：{fish['weight']}kg
@@ -138,13 +152,17 @@ class FishingSystem:
 
     def calculate_success_rate(self, user_id: str) -> float:
         """计算钓鱼成功率"""
-        base_rate = 0.7  # 基础成功率70%
+        self.update_weather()
+        base_rate = WEATHER_EFFECTS.get(self.current_weather, {}).get('success_rate', 0.5)
         bait_effect = self.get_bait_effect(user_id)
         return min(base_rate + bait_effect, 0.95)  # 最高95%成功率
 
     def get_fishing_cost(self) -> int:
         """计算钓鱼成本"""
-        return self.config.get('base_cost', 50)  # 默认成本50金币
+        self.update_weather()
+        base_cost = self.config.get('base_cost', 50)  # 默认成本50金币
+        cost_modifier = WEATHER_EFFECTS.get(self.current_weather, {}).get('cost_modifier', 1.0)
+        return int(base_cost * cost_modifier)
 
     def daily_check_in(self, user_id: str) -> str:
         """每日签到"""
@@ -314,7 +332,7 @@ class FishingSystem:
             for fish in fish_by_rarity[rarity]:
                 lock_time = fish.get('lock_time', 0)
                 lock_status = f" 🔒{int(lock_time//60)}分钟" if lock_time > 0 else ""
-                result.append(f"• {fish['name']} x{fish['quantity']} 💰{fish['base_value']}金币{lock_status}")
+                result.append(f"• {fish['name']} x{fish['quantity']} 💰{fish['value']}金币{lock_status}")
             
             result.append("")
         
@@ -387,18 +405,19 @@ class FishingSystem:
         
         # 查找鱼的ID
         fish_id = None
-        fish_value = 0
+        base_value = 0
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT id, base_value FROM fish_config WHERE name = ?", (fish_name,))
             result = cursor.fetchone()
             if result:
-                fish_id, fish_value = result
+                fish_id, base_value = result
             else:
                 return f"❌ 没有找到名为「{fish_name}」的鱼"
         
-        # 获取用户的这种鱼的数量
-        owned_amount = self.db.get_user_fish_quantity(user_id, fish_id)
+        # 获取用户的这种鱼的数量和累计价值
+        fish_data = self.db.get_user_fish_value(user_id, fish_id)
+        owned_amount = fish_data['quantity']
         if owned_amount < amount:
             return f"❌ 你只有{owned_amount}条「{fish_name}」，不够卖{amount}条"
         
@@ -416,11 +435,15 @@ class FishingSystem:
                 seconds = lock_time % 60
                 return f"❌ 「{fish_name}」处于禁售期，还有{minutes}分{seconds}秒解除"
         
-        # 计算总价值
-        total_value = fish_value * amount
+        # 按鱼塘记录的实际单价结算（与鱼塘显示一致，向下取整），旧数据无记录时回退到基础价值
+        if fish_data['total_value'] > 0:
+            per_unit = fish_data['total_value'] // owned_amount
+        else:
+            per_unit = base_value
+        total_value = per_unit * amount
         
         # 更新数据库
-        self.db.remove_fish_from_pond(user_id, fish_id, amount)
+        self.db.remove_fish_from_pond(user_id, fish_id, amount, per_unit * amount)
         self.db.update_user_coins(user_id, total_value)
         
         user_coins = self.db.get_user_coins(user_id)
@@ -448,10 +471,10 @@ class FishingSystem:
             fish_id = fish['id']
             quantity = fish['quantity']
             name = fish['name']
-            value = fish['base_value'] * quantity
+            value = fish['value'] * quantity
             
             # 从鱼塘中移除并增加金币
-            self.db.remove_fish_from_pond(user_id, fish_id, quantity)
+            self.db.remove_fish_from_pond(user_id, fish_id, quantity, fish['value'] * quantity)
             self.db.update_user_coins(user_id, value)
             
             total_sold += quantity

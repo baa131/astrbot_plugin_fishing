@@ -5,7 +5,7 @@ from astrbot.api.star import Context, Star, register
 from .fishing.fishing import FishingSystem
 from .fishing.db import FishingDB
 
-@register("fishing", "Your Name", "一个功能齐全的钓鱼系统插件", "1.0.0", "https://github.com/yourusername/astrbot_plugin_fishing")
+@register("fishing", "baa131", "一个功能齐全的钓鱼系统插件", "1.1.0", "https://github.com/baa131/astrbot_plugin_fishing")
 class FishingPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -172,7 +172,31 @@ class FishingPlugin(Star):
         '''查看钓鱼天气'''
         result = self.fishing_system.get_weather_info()
         yield event.plain_result(result)
-    
+
+    @filter.command("钓鱼排行")
+    async def leaderboard(self, event: AstrMessageEvent):
+        '''查看总排行榜'''
+        result = self.fishing_system.show_leaderboard('all')
+        yield event.plain_result(result)
+
+    @filter.command("日榜")
+    async def daily_leaderboard(self, event: AstrMessageEvent):
+        '''查看今日排行'''
+        result = self.fishing_system.show_leaderboard('day')
+        yield event.plain_result(result)
+
+    @filter.command("周榜")
+    async def weekly_leaderboard(self, event: AstrMessageEvent):
+        '''查看本周排行'''
+        result = self.fishing_system.show_leaderboard('week')
+        yield event.plain_result(result)
+
+    @filter.command("月榜")
+    async def monthly_leaderboard(self, event: AstrMessageEvent):
+        '''查看本月排行'''
+        result = self.fishing_system.show_leaderboard('month')
+        yield event.plain_result(result)
+
     async def terminate(self):
         '''插件被卸载/停用时调用'''
         self.logger.info("钓鱼插件正在终止...")
